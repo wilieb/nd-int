@@ -4,15 +4,15 @@ export default defineEventHandler(async (event) => {
   const db = getDatabase()
   
   try {
-    const accounts = db.prepare(`
+    const result = await db.execute(`
       SELECT id, name, currency, balance, created_at 
       FROM accounts 
       ORDER BY currency, name
-    `).all()
+    `)
     
     return {
       success: true,
-      data: accounts
+      data: result.rows ?? result
     }
   } catch (error) {
     throw createError({

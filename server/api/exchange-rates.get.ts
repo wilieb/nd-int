@@ -4,11 +4,12 @@ export default defineEventHandler(async (event) => {
   const db = getDatabase()
   
   try {
-    const rates = db.prepare(`
+    const result = await db.execute(`
       SELECT from_currency, to_currency, rate, updated_at
       FROM exchange_rates
       ORDER BY from_currency, to_currency
-    `).all()
+    `)
+    const rates = result.rows || []
     
     return {
       success: true,

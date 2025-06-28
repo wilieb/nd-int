@@ -6,6 +6,13 @@ export default defineEventHandler(async (event) => {
   const db = getDatabase()
   
   try {
+    if (!accountId) {
+      throw createError({
+        statusCode: 400,
+        statusMessage: 'Account ID is required'
+      })
+    }
+
     let sql = `
       SELECT 
         tl.*,
@@ -24,7 +31,7 @@ export default defineEventHandler(async (event) => {
       WHERE tl.account_id = ?
     `
     
-    const params = [accountId]
+    const params = [String(accountId)]
     
     if (query.status) {
       sql += ' AND tl.status = ?'
@@ -33,8 +40,9 @@ export default defineEventHandler(async (event) => {
     
     sql += ' ORDER BY tl.created_at DESC'
     
-    const logs = db.prepare(sql).all(...params)
-    
+    const result = await db.execute(sql, params)
+    const logs = result.rows || []
+
     return {
       success: true,
       data: logs

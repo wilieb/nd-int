@@ -34,7 +34,8 @@ export default defineEventHandler(async (event) => {
     
     sql += ' ORDER BY t.created_at DESC'
     
-    const transactions = db.prepare(sql).all(...params)
+    const result = await db.execute(sql, params)
+    const transactions = result.rows ?? []
     
     return {
       success: true,

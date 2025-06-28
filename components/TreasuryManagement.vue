@@ -196,7 +196,7 @@
                   v-for="account in filteredAccounts" 
                   :key="account.id"
                   class="p-4 border border-slate-200 rounded-lg hover:border-slate-300 transition-colors cursor-pointer group"
-                  :class="{ 'ring-2 ring-emerald-500 border-emerald-500': selectedAccount?.id === account.id }"
+                  :class="selectedAccount?.id === account.id ? currencyClassMapActiveTwo[account.currency] : ''"
                   @click="selectAccount(account)"
                 >
                   <div class="flex items-center justify-between mb-2">
@@ -512,6 +512,12 @@ const currencyClassMapActive = {
   KES: 'w-2 h-2 bg-emerald-500 rounded-full',
   USD: 'w-2 h-2 bg-blue-500 rounded-full',
   NGN: 'w-2 h-2 bg-purple-500 rounded-full',
+}
+
+const currencyClassMapActiveTwo = {
+  KES: 'ring-2 ring-emerald-500 border-emerald-500 bg-emerald-50',
+  USD: 'ring-2 ring-blue-500 border-blue-500 bg-blue-50',
+  NGN: 'ring-2 ring-purple-500 border-purple-500 bg-purple-50',
 }
 
 const exchangeInfo = ref({
