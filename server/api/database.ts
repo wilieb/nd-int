@@ -1,41 +1,47 @@
 import { createClient } from '@libsql/client'
 import type { Client } from '@libsql/client'
+import type { H3Event } from 'h3'
 
-let db: Client | null = null
 let isInitialized = false
+let clientInstance: Client | null = null
 
-function getDatabase() {
-  if (!db) {
-    // Create Turso client
-    db = createClient({
-      url: process.env.TURSO_DATABASE_URL!,
-      authToken: process.env.TURSO_AUTH_TOKEN!,
-    })
+function useTurso(event?: H3Event): Client {
+  if (clientInstance) {
+    return clientInstance
+  }
+
+  const { turso } = useRuntimeConfig(event)
+
+  console.log('Turso configuration:', !turso.authToken, !turso.databaseUrl);
+  
+  if (!turso?.databaseUrl || !turso?.authToken) {
+    throw new Error('Turso configuration missing: databaseUrl and authToken are required')
   }
   
-  return db
+  clientInstance = createClient({
+    url: turso.databaseUrl,
+    authToken: turso.authToken,
+  })
+  
+  return clientInstance
 }
 
-async function ensureDatabaseInitialized() {
+async function ensureDatabaseInitialized(event?: H3Event): Promise<Client> {
   if (!isInitialized) {
-    const db = getDatabase()
+    const db = useTurso(event)
     await initializeDatabase(db)
     isInitialized = true
-    console.log('Database initialized successfully', isInitialized, db);
-    
   }
-  return getDatabase()
+  return useTurso(event)
 }
 
-async function initializeDatabase(client: Client) {
+async function initializeDatabase(client: Client): Promise<void> {
   try {
-    console.log('Initializing database tables...')
     
-    // Create tables
     await client.execute(`
       CREATE TABLE IF NOT EXISTS accounts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
+        name TEXT NOT NULL UNIQUE,
         currency TEXT NOT NULL,
         balance REAL NOT NULL DEFAULT 0,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -68,7 +74,8 @@ async function initializeDatabase(client: Client) {
         from_currency TEXT NOT NULL,
         to_currency TEXT NOT NULL,
         rate REAL NOT NULL,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(from_currency, to_currency)
       );
     `)
 
@@ -90,16 +97,10 @@ async function initializeDatabase(client: Client) {
       );
     `)
 
-    console.log('Tables created successfully')
-
-    // Check if data exists
     const accountCount = await client.execute('SELECT COUNT(*) as count FROM accounts')
-    const count = accountCount.rows[0]?.count as number || 0
+    const count = (accountCount.rows[0] as any)?.count || 0
 
-    if (count === 0) {
-      console.log('Inserting default data...')
-      
-      // Insert default accounts
+    if (Number(count) === 0) {
       const accounts = [
         ['Mpesa_KES_1', 'KES', 250000.50],
         ['Mpesa_KES_2', 'KES', 180000.00],
@@ -113,14 +114,18 @@ async function initializeDatabase(client: Client) {
         ['Bank_NGN_2', 'NGN', 3200000.75]
       ]
 
-      for (const account of accounts) {
-        await client.execute({
-          sql: 'INSERT INTO accounts (name, currency, balance) VALUES (?, ?, ?)',
-          args: account
-        })
+      for (const [name, currency, balance] of accounts) {
+        try {
+          const result = await client.execute({
+            sql: 'INSERT INTO accounts (name, currency, balance) VALUES (?, ?, ?)',
+            args: [name, currency, balance]
+          })
+        } catch (error) {
+          console.error(`Failed to insert account ${name}:`, error)
+          throw error
+        }
       }
 
-      // Insert default exchange rates
       const rates = [
         ['USD', 'KES', 150.00],
         ['KES', 'USD', 0.0067],
@@ -130,21 +135,40 @@ async function initializeDatabase(client: Client) {
         ['NGN', 'KES', 0.1875]
       ]
 
-      for (const rate of rates) {
-        await client.execute({
-          sql: 'INSERT INTO exchange_rates (from_currency, to_currency, rate) VALUES (?, ?, ?)',
-          args: rate
-        })
+      for (const [fromCurrency, toCurrency, rate] of rates) {
+        try {
+          const result = await client.execute({
+            sql: 'INSERT OR REPLACE INTO exchange_rates (from_currency, to_currency, rate) VALUES (?, ?, ?)',
+            args: [fromCurrency, toCurrency, rate]
+          })
+          console.log(`Inserted rate: ${fromCurrency} -> ${toCurrency} = ${rate}`)
+        } catch (error) {
+          console.error(`Failed to insert rate ${fromCurrency}->${toCurrency}:`, error)
+          throw error
+        }
       }
 
-      console.log('Default data inserted successfully')
     } else {
       console.log('Data already exists, skipping default data insertion')
     }
   } catch (error) {
     console.error('Error initializing database:', error)
-    throw error
+    console.error('Database initialization failed, but continuing...')
   }
 }
 
-export { getDatabase, ensureDatabaseInitialized }
+function getTursoClient(event?: H3Event): Client {
+  return useTurso(event)
+}
+
+function resetInitialization(): void {
+  isInitialized = false
+  clientInstance = null
+}
+
+export { 
+  useTurso, 
+  ensureDatabaseInitialized, 
+  getTursoClient, 
+  resetInitialization 
+}

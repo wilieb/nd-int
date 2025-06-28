@@ -1,7 +1,7 @@
-import { getDatabase } from './database'
+import { ensureDatabaseInitialized } from './database'
 
 export default defineEventHandler(async (event) => {
-  const db = getDatabase()
+  const db = await ensureDatabaseInitialized(event)
   
   try {
     const result = await db.execute(`

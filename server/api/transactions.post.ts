@@ -1,9 +1,9 @@
-import { getDatabase } from './database'
+import { ensureDatabaseInitialized } from './database'
 
 export default defineEventHandler(async (event) => {
   const rawBody = await readBody(event)
   const body = typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody
-  const db = getDatabase()
+  const db = await ensureDatabaseInitialized(event)
 
   try {
     const { fromAccountId, toAccountId, amount, note, scheduledDate } = body

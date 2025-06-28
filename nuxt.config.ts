@@ -7,6 +7,10 @@ export default defineNuxtConfig({
     public: {
       apiBase: process.env.API_BASE,
     },
+    turso: {
+      databaseUrl: process.env.TURSO_DATABASE_URL,
+      authToken: process.env.TURSO_AUTH_TOKEN
+    },
   },
   vite: {
     server: {

@@ -1,9 +1,9 @@
-import { getDatabase } from '../database'
+import { ensureDatabaseInitialized } from '../database'
 
 export default defineEventHandler(async (event) => {
   const accountId = getRouterParam(event, 'id')
   const query = getQuery(event)
-  const db = getDatabase()
+  const db = await ensureDatabaseInitialized(event)
   
   try {
     if (!accountId) {
