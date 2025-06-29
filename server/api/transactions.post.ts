@@ -8,6 +8,14 @@ export default defineEventHandler(async (event) => {
   try {
     const { fromAccountId, toAccountId, amount, note, scheduledDate } = body
 
+    if (!fromAccountId || !toAccountId || !amount || amount <= 0) {
+      throw new Error('Missing or invalid transaction data')
+    }
+
+    if (fromAccountId === toAccountId) {
+      throw new Error('Cannot transfer to the same account')
+    }
+
     const { rows: [fromAccount] } = await db.execute({
       sql: 'SELECT * FROM accounts WHERE id = ?',
       args: [fromAccountId],
@@ -22,6 +30,10 @@ export default defineEventHandler(async (event) => {
       throw new Error('Account not found')
     }
 
+    if ((fromAccount.balance ?? 0) < amount) {
+      throw new Error('Insufficient balance')
+    }
+
     let exchangeRate = 1
     let convertedAmount = amount
 
@@ -31,13 +43,10 @@ export default defineEventHandler(async (event) => {
         args: [fromAccount.currency, toAccount.currency],
       })
 
-      if (!rate) {
-        throw new Error(`Exchange rate not found for ${fromAccount.currency} to ${toAccount.currency}`)
+      if (!rate || typeof rate.rate !== 'number') {
+        throw new Error(`Exchange rate not found or invalid`)
       }
 
-      if (typeof rate.rate !== 'number' || rate.rate === null) {
-        throw new Error(`Invalid exchange rate value for ${fromAccount.currency} to ${toAccount.currency}`)
-      }
       exchangeRate = rate.rate
       convertedAmount = amount * exchangeRate
     }
@@ -46,15 +55,11 @@ export default defineEventHandler(async (event) => {
     const processedDate = isScheduled ? null : new Date().toISOString()
     const status = isScheduled ? 'scheduled' : 'completed'
 
-    // Start manual transaction
     let transactionId: number | undefined
-    await db.execute({ sql: 'BEGIN', args: [] })
-    try {
-      if ((fromAccount.balance ?? 0) < amount) {
-        throw new Error('Insufficient balance')
-      }
 
-      const result = await db.execute({
+    const tx = await db.transaction();
+    try {
+      const result = await tx.execute({
         sql: `
           INSERT INTO transactions (
             from_account_id, to_account_id, amount, original_amount,
@@ -74,60 +79,36 @@ export default defineEventHandler(async (event) => {
         : result.lastInsertRowid
 
       if (!isScheduled) {
-        try {
-          await db.execute({
-            sql: 'UPDATE accounts SET balance = balance - ? WHERE id = ?',
-            args: [amount, fromAccountId]
-          })
+        await tx.execute({
+          sql: 'UPDATE accounts SET balance = balance - ? WHERE id = ?',
+          args: [amount, fromAccountId]
+        })
 
-          await db.execute({
-            sql: 'UPDATE accounts SET balance = balance + ? WHERE id = ?',
-            args: [convertedAmount, toAccountId]
-          })
+        await tx.execute({
+          sql: 'UPDATE accounts SET balance = balance + ? WHERE id = ?',
+          args: [convertedAmount, toAccountId]
+        })
 
-          await db.execute({
-            sql: `INSERT INTO transaction_logs (
-              account_id, transaction_id, action, amount, currency,
-              balance_before, balance_after, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            args: [fromAccountId, transactionId, 'debit', amount, fromAccount.currency,
-              Number(fromAccount.balance ?? 0), Number(fromAccount.balance ?? 0) - Number(amount), 'completed']
-          })
+        await tx.execute({
+          sql: `INSERT INTO transaction_logs (
+            account_id, transaction_id, action, amount, currency,
+            balance_before, balance_after, status
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          args: [fromAccountId, transactionId, 'debit', amount, fromAccount.currency,
+            Number(fromAccount.balance), Number(fromAccount.balance) - amount, 'completed']
+        })
 
-          await db.execute({
-            sql: `INSERT INTO transaction_logs (
-              account_id, transaction_id, action, amount, currency,
-              balance_before, balance_after, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            args: [toAccountId, transactionId, 'credit', convertedAmount, toAccount.currency,
-              toAccount.balance, toAccount.balance + convertedAmount, 'completed']
-          })
+        await tx.execute({
+          sql: `INSERT INTO transaction_logs (
+            account_id, transaction_id, action, amount, currency,
+            balance_before, balance_after, status
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          args: [toAccountId, transactionId, 'credit', convertedAmount, toAccount.currency,
+            toAccount.balance, toAccount.balance + convertedAmount, 'completed']
+        })
 
-        } catch (error) {
-          if (typeof transactionId === 'undefined') {
-            throw new Error('Transaction ID is undefined');
-          }
-
-          await db.execute({
-            sql: 'UPDATE transactions SET status = ? WHERE id = ?',
-            args: ['failed', transactionId]
-          });
-
-
-          await db.execute({
-            sql: `INSERT INTO transaction_logs (
-              account_id, transaction_id, action, amount, currency,
-              balance_before, balance_after, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            args: [fromAccountId, transactionId, 'debit', amount, fromAccount.currency,
-              fromAccount.balance, fromAccount.balance, 'failed']
-          })
-
-          await db.execute({ sql: 'ROLLBACK', args: [] })
-          throw error
-        }
       } else {
-        await db.execute({
+        await tx.execute({
           sql: `INSERT INTO transaction_logs (
             account_id, transaction_id, action, amount, currency,
             balance_before, balance_after, status
@@ -136,11 +117,10 @@ export default defineEventHandler(async (event) => {
             fromAccount.balance, fromAccount.balance, 'scheduled']
         })
       }
-
-      await db.execute({ sql: 'COMMIT', args: [] })
-    } catch (error) {
-      await db.execute({ sql: 'ROLLBACK', args: [] })
-      throw error
+      await tx.commit();
+    } catch (err) {
+      await tx.rollback();
+      throw err;
     }
 
     return {
